@@ -33,8 +33,31 @@ DIGEST_NEWLINE_FILE = 'adc83b19e793491b1c6ea0fd8b46cd9f32e592fc'
 DIGEST_TMP_FILE = '1ceaf73df40e531df3bfb26b4fb7cd95fb7bff1d'
 DIGEST_VIOLATION = '0000000000000000000000000000000000000000'
 DIGEST_VIOLATION_FLOW_TOMTOU = '11111111111111111111111111111111111'
+D1 = 'a1a1e24284fb95ecd3d72afab420523f18a97ec5'
+D2 = 'c9b9bf883ac5e7a37fdf414b200a44c1433e9ef7'
+D3 = '9274274efe558ab4f6233cefacdeab18c6749edb'
+D4 = '5ca607bcc2351c34d8ec9e3dcaeddea2d8f4b04c'
+D5 = '0e8473d218f519c8b9f44964e44a46cb68c1a986'
+D6 = '2a19149dda7cfe2c9467ee4f578c12b718f5c3bd'
+D7 = '4544ef9ae7f368067cdcf312f8fc259101a603c1'
+D8 = '49550b79f9254f77ec1297bc8e9b6b97f1e54fdc'
+D9 = 'd748c47ed1663f24223eea36d213dc7587f8971a'
+D10 = 'b8c7f3dc50728e0d20659c842609dcde7e541a23'
+D11 = '7cc2771da648520d83ec5a9cba3d1354a00864eb'
+D12 = '50cb57411fa65fad5b16bcd0f36862baf8a75a6a'
+D13 = 'a346d446be60e5557921282423ad740bd5d28b5b'
+D14 = '057ba154bab2cd4d2d8fc092f1684ec65b0c2448'
+D15 = '0b85d6858d1487dc19f96b8eed57b0b7c3c31dc9'
+D16 = 'b75f76db2ede4a38a5a79687dc996d1935205a32'
+D17 = '3de6fe5f01e1bed0977d6555d6f8b6bfe47e06bb'
+D18 = '6d1cb21bed64e9a44b77c201b7ab320e24851074'
+D19 = 'bddcdf86ac9233b847453c850fab1a1e8c1c883c'
 
-known_digests = [DIGEST_EMPTY_FILE, DIGEST_NEWLINE_FILE, DIGEST_TMP_FILE]
+
+
+known_digests = [DIGEST_EMPTY_FILE, DIGEST_NEWLINE_FILE, DIGEST_TMP_FILE, \
+	D1, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13, D14, D15, \
+	D16, D17, D18, D19]
 
 def add_known_digest(digest):
     known_digests.append(digest)
@@ -79,7 +102,7 @@ class IMATemplateDesc(object):
             return self.get_field_data(EVENTNAME_FIELD, data)
         else:
             raise Exception('Event name field not found')
-        
+
     def get_field_data(self, field_id, data):
         idx = self.fields.index(field_id)
         return data[idx]
@@ -120,6 +143,7 @@ class IMARecord(object):
     @classmethod
     def default_template(cls):
         # return the template name of boot_aggregate
+        print cls;
         return cls.records[0].entry['template_name']
 
     @classmethod

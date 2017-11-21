@@ -7,7 +7,6 @@
 #                    TORSEC group -- http://security.polito.it
 #
 # Author: Roberto Sassu <roberto.sassu@polito.it>
-#         Tao Su <tao.su@polito.it>
 #
 # This library is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public
@@ -46,6 +45,7 @@ def propagation_rule(status, propagation):
     propagation_map['release']       = 0
     propagation_map['name-mismatch'] = 1
     propagation_map['enhancement']   = 2
+    propagation_map['updates']   = 2
     propagation_map['bugfix']        = 3
     propagation_map['security']      = 4
     propagation_map['unknown']       = 4

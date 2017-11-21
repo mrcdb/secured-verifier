@@ -7,7 +7,6 @@
 #                    TORSEC group -- http://security.polito.it
 #
 # Author: Roberto Sassu <roberto.sassu@polito.it>
-#         Tao Su <tao.su@polito.it>
 #
 # This library is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public
@@ -40,6 +39,7 @@ from analysis import *
 import networkx as nx
 from suds.client import Client
 from parser import IRParser
+from parser import ContainerCheckAnalysis
 
 
 # if graph type is 'auto', RA Verifier determines the best choice depending
@@ -56,15 +56,20 @@ def main(argv):
     log_file = None
     selinux_policy_path = None
     results_dir = '.'
+    containers = {}
+    checked_containers = ''
+    doCheckContAnalysis = False
+
     log_dir = '/var/www/html/OAT/unknown_log'
 
     # parse command line
     try:
-        opts, args = getopt.getopt(argv, "hH:K:i:q:vl:a:g:s:r:",
+        opts, args = getopt.getopt(argv, "hH:K:i:q:vl:a:g:s:r:c:",
                                    ["help", "host=", "keyspace=",
                                    "ima-list=", "distribution=",
                                    "verbose", "log_file=", "analysis=",
-                                   "graph_type=", "selinux_policy_path="])
+                                   "graph_type=", "selinux_policy_path=",
+                                   "containers-mapping"])
     except getopt.GetoptError:
         usage()
         sys.exit(2)
@@ -94,6 +99,8 @@ def main(argv):
             selinux_policy_path = arg
         elif opt in ("-r", "--results_dir"):
             results_dir = arg
+        elif opt in ("-c", "--containers-mapping"):
+            containers = dict(s.split('=') for s in arg.split(','))
 
 
     distro = os.environ.get('OS', distro)
@@ -106,10 +113,18 @@ def main(argv):
     if os.path.exists(log_file) is False:
         set_verbose_mode(True);
     else:
-        log_file = None;
+        #log_file = None;
+        set_verbose_mode(True);
 
     log_init(log_file)
     Statistics.start_timer()
+
+    if 'cont-check' in analysis:
+        doCheckContAnalysis = True
+        for item in analysis.split(','):
+            if item.startswith('cont-list'):
+                checked_containers = item.split('=')[1]
+                break
 
     try:
         if report_url is not None and report_id != 0:
@@ -120,11 +135,10 @@ def main(argv):
             report_str = fd.read()
             fd.close()
 
-        IRParser(report_str)
+        IRParser(report_str, ContainerCheckAnalysis(doCheckContAnalysis, containers, checked_containers))
     except Exception as e:
         log_error('Error opening IR, %s' % e)
         sys.exit(2)
-
     Statistics.set_elapsed_time('time_parse_ima_list')
 
     graph = nx.DiGraph()
@@ -140,7 +154,7 @@ def main(argv):
                 break
 
     if graph_type == 'auto':
-        if IMARecord.default_template() in ['ima', 'ima-ng']:
+        if IMARecord.default_template() in ['ima', 'ima-ng', 'ima-cont-id']:
             graph_type = 'digests'
         elif IMARecord.default_template_contains_fields(lsm_inode_fields):
             graph_type = 'lsm+inode'
@@ -194,8 +208,8 @@ def main(argv):
     tcb = []
     priv_processes = []
     cert_digest = None
-
-    if analysis_name not in ['load-time', 'run-time', 'load-time+run-time', 'check-cert', 'load-time+check-cert']:
+    
+    if analysis_name not in ['load-time', 'run-time', 'load-time+run-time', 'check-cert', 'load-time+check-cert', 'load-time+cont-check']:
         log_error('Unknown analysis %s' % analysis_name)
         sys.exit(2)
 
@@ -217,6 +231,8 @@ def main(argv):
             load_time_prop_only = eval(item[offset:])
         elif item.startswith('cert_digest='):
             cert_digest = item[offset:]
+        elif item.startswith('cont-list='):
+            checked_containers = item[offset:]
         else:
             log_error('Unknown parameter %s' % item)
             sys.exit(2)

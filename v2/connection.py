@@ -35,10 +35,12 @@ class DBConnection(object):
                        include_cf_test = False, sort_reverse = False):
         query_result = {}
 
-        if distro.startswith('Ubuntu') and cf_name is 'PackagesHistory':
+#        if distro.startswith('Ubuntu') and cf_name is 'PackagesHistory':
+        if (distro.startswith('utopic') or distro.startswith('trusty')) and cf_name is 'PackagesHistory':
             cf_name += 'DEB'
 
         cf = pycassa.ColumnFamily(self.client, cf_name)
+
         try:
             query_result = cf.multiget(row_keys, column_reversed = sort_reverse)
         except pycassa.NotFoundException, TException:
