@@ -28,11 +28,30 @@ THE SOFTWARE.
 import config as cfg
 import json
 import requests
-import db
+import os
+#import db
 
 # disable urllib3 warnings about certificate verification
 import urllib3
 urllib3.disable_warnings()
+
+def issuePollAttestationContCheck(verifier, node, level, cont_list):
+    pollhost_url = (
+        ("https://%s:8443/AttestationService/resources/PollHosts") %
+        (verifier)
+    )
+    node_id = node
+    integrity_level = level
+    
+    with open('/home/user/ram/container-ids.txt') as f:
+        cont_list = f.read().splitlines()
+
+    post_data = dict(hosts=[node_id],
+                     analysisType=('load-time+cont-check,%s,cont-list=%s' % (integrity_level, "+".join(cont_list))))
+    r = requests.post(pollhost_url, verify=cfg.OAT_CERT,
+                      data=json.dumps(post_data),
+                      headers={'Content-Type': 'application/json'})
+    return r.json()
 
 
 def issuePollAttestation(verifier, node, level):
@@ -56,7 +75,8 @@ def issuePollAttestationCheckCert(verifier, node, level):
         (verifier)
     )
 
-    cert_digest = db.getHostCertDGST(node)['cert_digest']
+#    cert_digest = db.getHostCertDGST(node)['cert_digest']
+    cert_digest = "5189750b5910dd3a749a834a4137e594196be108"
     node_id = node
     integrity_level = level
     post_data = dict(hosts=[node_id],analysisType=('load-time+check-cert,%s,cert_digest=%s' % (integrity_level, cert_digest)))

@@ -74,6 +74,7 @@ class LoadTimeAnalysis(Analysis):
         Digest.execute_packages_query(conn, distro)
         Statistics.set_elapsed_time('time_exec_query')
 
+
         # digests stats
         self.n_digests_ok = 0
         self.n_digests_not_found = 0
@@ -126,6 +127,7 @@ class LoadTimeAnalysis(Analysis):
                 continue
 
             self.n_digests_ok += 1
+
             for pkg_name in digest_obj.pkg_history:
                 if digest_obj.pkg_history[pkg_name] is None:
                     pkg = Package.get(pkg_name, None)
@@ -249,6 +251,10 @@ class LoadTimeAnalysis(Analysis):
         level, op = requirement
         severity_level = 'ok'
 
+       	if len(Subject.subj_label_dict)	== 0:
+       	    severity_level = "not-found"
+
+
         for subj in Subject.subj_label_dict.values():
             if not self.subj_is_selected(subj):
                 continue
@@ -270,6 +276,7 @@ class LoadTimeAnalysis(Analysis):
 
         result = eval('%s %s %s' % (self.extract_level(current_level), op,
             self.extract_level(level)))
+
         if not result:
             msg['load'] = ['level %s, req %s%s' % \
                 (self.extract_level(current_level), op,
@@ -435,7 +442,7 @@ class ProcTransAnalysis(Analysis):
 
     def view_graph(self, report_id = 0):
         g = AGraph(self.graph)
-        
+
         g.draw('%s/graph-proc-trans-%d.svg' % (self.results_dir,
             self.report_id), edge_types = ['proc_trans'], prog = 'dot')
 

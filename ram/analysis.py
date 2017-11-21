@@ -1,8 +1,8 @@
 '''
 The MIT License (MIT)
 
-Copyright (c) 2015 Tao Su <tao.su@polito.it>
-                   Paolo Smiraglia <paolo.smiraglia@polito.it>
+Copyright (c) 2015 Paolo Smiraglia <paolo.smiraglia@polito.it>
+                   Tao Su <tao.su@polito.it>
                    TORSEC Group (http://security.polito.it)
                    Politecnico di Torino
 
