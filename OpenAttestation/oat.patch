@@ -1,0 +1,514 @@
+From 50c8bf21006b22f1af8a23987afc0ad6c1664f0b Mon Sep 17 00:00:00 2001
+From: Matteo Lanza <s202556@studenti.polito.it>
+Date: Mon, 15 Feb 2016 16:09:12 +0100
+Subject: [PATCH] Extended IR to support container analysis
+
+---
+ Source/HisClient/src/gov/niarl/his/StandaloneHIS.java | 126 ++++++++-
+ Source/xsd/Core_Integrity_Manifest_v1_0_1.xsd      | 287 +++++++++++----------
+ 2 files changed, 275 insertions(+), 138 deletions(-)
+
+diff --git a/Source/HisClient/src/gov/niarl/his/StandaloneHIS.java b/Source/HisClient/src/gov/niarl/his/StandaloneHIS.java
+index 7b6338e..f595371 100644
+--- a/Source/HisClient/src/gov/niarl/his/StandaloneHIS.java
++++ b/Source/HisClient/src/gov/niarl/his/StandaloneHIS.java
+@@ -59,9 +59,12 @@ import java.nio.ByteBuffer;
+ import java.nio.ByteOrder; 
+ 
+ import java.security.MessageDigest;
+-import java.security.NoSuchAlgorithmException; 
++import java.security.NoSuchAlgorithmException;
++import java.util.ArrayList;
+ import java.util.Arrays;
++import java.util.HashMap;
+ import java.util.List;
++import java.util.Map;
+ import java.util.StringTokenizer;
+ 
+ import javax.xml.bind.JAXBContext;
+@@ -87,6 +90,8 @@ import org.trustedcomputinggroup.xml.schema.integrity_report_v1_0_.TpmDigestValu
+ import org.trustedcomputinggroup.xml.schema.simple_object_v1_0_.SimpleObjectType;
+ import org.trustedcomputinggroup.xml.schema.simple_object_v1_0_.ValuesType;
+ import org.trustedcomputinggroup.xml.schema.core_integrity_v1_0_1_.DigestValueType;
++import org.trustedcomputinggroup.xml.schema.core_integrity_v1_0_1_.ContainerType;
++import org.trustedcomputinggroup.xml.schema.core_integrity_v1_0_1_.HostType;
+ import org.w3._2000._09.xmldsig_.KeyInfoType;
+ import org.w3._2000._09.xmldsig_.KeyValueType;
+ import org.w3._2000._09.xmldsig_.SignatureMethodType;
+@@ -180,7 +185,10 @@ public class StandaloneHIS
+     int hostOS=0;
+     //host name of the local computer
+     String computerName= "unknownHost";
+-
++    //boolean to indicate if insert in the IR elements for
++    //containers analysis
++    boolean addContainerAnalysisSupport = false;
++    
+     //name for the log4j properties file
+     public static final String LOG4J_PROPERTIES_FILE = "log4j.properties";
+ 
+@@ -214,6 +222,7 @@ public class StandaloneHIS
+     public static final String OS_TYPE_LABEL = "OSType";
+     public static final String VERIFY_COMMAND_LABEL = "VerifyClientAction";
+     public static final String CLEAN_COMMAND_LABEL = "CleanClientAction";
++    public static final String ADD_CONTAINER_ANALYSIS_SUPPORT = "AddContainerAnalysisSupport";
+ 
+     //OS Type ID
+     static final int WINDOWS_OS = 1;
+@@ -344,7 +353,7 @@ public class StandaloneHIS
+         boolean dynamicHIS = false;
+         boolean showSplash = false;
+         boolean brandHIS = false;
+-
++        
+         //bounds check for presence of the first argument
+         if(args.length>=1)
+         {
+@@ -572,7 +581,11 @@ public class StandaloneHIS
+         	//so get computer name from the exception msg
+     		StringTokenizer st = new StringTokenizer(ex.getMessage());
+     		while (st.hasMoreTokens()) computerName = st.nextToken();
+-        }       
++        }     
++        
++        //pull from properties a boolean indicating if inserting
++        //Container XML elements in the IR for making container analysis
++        addContainerAnalysisSupport = new Boolean(hisProperties.getProperty(ADD_CONTAINER_ANALYSIS_SUPPORT, "False"));
+ 
+         //pull the splash image from properties
+         String splashFile = hisProperties.getProperty(SPLASH_IMAGE_LABEL);
+@@ -1381,8 +1394,12 @@ public class StandaloneHIS
+ 	private SnapshotType initializeSnapshot(String UUID, int pcrIndex) {
+ 		SnapshotType snap = new SnapshotType();
+ 
++		//ComponentIDType component = new ComponentIDType();
+ 		ComponentIDType component = new ComponentIDType();
+ 		VendorIdType vendorID = new VendorIdType();
++		
++		Map<String, String> containerMappings;
++		List<String> hostDevices;
+ 
+ 		vendorID.setName(hisProperties.getProperty(VENDOR_NAME_LABEL, "JJ")); 
+ 		vendorID.getTcgVendorIdOrSmiVendorIdOrVendorGUID().add(new ObjectFactory().createVendorIdTypeSmiVendorId(new BigInteger("0")));
+@@ -1397,6 +1414,25 @@ public class StandaloneHIS
+ 			component.setSimpleName ("JJ");
+ 		component.setVersionBuild (new BigInteger ("1250694000000"));
+ 		component.setVersionString ("JJ");
++		
++		//If the relative property is set to true and pcr index is 10, it adds a list of Container
++		//XMl elements and an Host element; those are for mapping with device numbers;
++		if (addContainerAnalysisSupport && pcrIndex == 10){
++			containerMappings = retrieveMapDmContainers();
++			for (String key : containerMappings.keySet()) {
++				ContainerType container = new ContainerType();
++				container.setId(key);
++				container.setDevId(containerMappings.get(key));
++				component.getContainer().add(container);
++			}
++			
++			hostDevices = retrieveHostDevices();
++			HostType host = new HostType();
++			for (int i = 0; i < hostDevices.size(); i++){
++				host.getDevId().add(hostDevices.get(i));
++				component.setHost(host);
++			}
++		}
+ 
+ 		DigestMethodType digestMethod = new DigestMethodType();
+ 		digestMethod.setAlgorithm ("unknown");
+@@ -1411,6 +1447,82 @@ public class StandaloneHIS
+ 		snap.setComponentID(component);
+ 		return snap;
+ 	}
++	
++	
++	/** 
++	 * Retrieve a map indicating the association between DeviceMapper
++	 * virtual device numbers and the relative Docker container Id
++	 * 
++	 * @return A map containing the association
++	 */
++	public Map<String, String> retrieveMapDmContainers() {
++		Map<String, String> mappings = new HashMap();
++		String dmMajorNumber = null;
++		
++		try{
++	        Process p = Runtime.getRuntime().exec("ls -al /dev");
++	        String s;
++	        BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()));
++	        while ((s = br.readLine()) != null){
++	        	if(s.contains("dm-0")){
++	        		dmMajorNumber = s.trim().replaceAll(" +", " ").split(" ")[4];
++	        		dmMajorNumber = dmMajorNumber.substring(0, dmMajorNumber.length()-1);
++	        	}
++	        }
++	        p.waitFor();
++	        p.destroy();
++	        
++	        if (dmMajorNumber != null){
++	        	File folder = new File("/dev/mapper");
++				File[] listOfFiles = folder.listFiles();
++
++                // search entries that contains 'docker' name and that are not the base pool
++                // each of them is an entry relative to an active Docker container
++			    for (int i = 0; i < listOfFiles.length; i++) {
++			      if(listOfFiles[i].getName().contains("docker") && !listOfFiles[i].getName().contains("pool")){
++			    	  String devNumber = dmMajorNumber + ":" + listOfFiles[i].getCanonicalFile().getName().substring(3);
++			    	  String id = (listOfFiles[i].getName().split("-")[3]).substring(0, 12);
++			    	  mappings.put(id, devNumber);
++			      }
++			    }
++	        }
++		}
++		catch (Exception e) {
++			e.printStackTrace();
++		}
++		return mappings;
++	}
++	
++	/** 
++	 * Retrieve a list with all device numbers associated to the host
++	 * 
++	 * @return A list containing the values
++	 */
++	public List<String> retrieveHostDevices(){
++		List devList = new ArrayList();
++		Process p;
++		String s;
++		String devNumber;
++		
++		try{
++	        p = Runtime.getRuntime().exec("lsblk");
++	        BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()));
++	        s = br.readLine();
++	        while ((s = br.readLine()) != null){
++	        	if(!s.contains("docker")){
++	        		devNumber = s.trim().replaceAll(" +", " ").split(" ")[1];
++	        		devList.add(devNumber);
++	        	}
++	        }
++	        p.waitFor();
++	        p.destroy();
++		}
++		catch (Exception e) {
++			e.printStackTrace();
++		}
++		
++		return devList;
++	}
+ 
+ 	/** 
+ 	 * Creates an element Values and adds it to the received
+@@ -1932,6 +2044,7 @@ public class StandaloneHIS
+         }
+         catch(Exception e)
+         {
++        	e.printStackTrace();
+             throw new Exception( "Web service error: " + e.getMessage() );
+         }
+         
+@@ -2305,7 +2418,4 @@ class StreamOutput extends Thread
+         streamOutputThread = null;
+     }    
+     
+-}
+-
+-
+-
++}
+\ No newline at end of file
+diff --git a/Source/xsd/Core_Integrity_Manifest_v1_0_1.xsd b/Source/xsd/Core_Integrity_Manifest_v1_0_1.xsd
+index d46b9aa..86d41f0 100644
+--- a/Source/xsd/Core_Integrity_Manifest_v1_0_1.xsd
++++ b/Source/xsd/Core_Integrity_Manifest_v1_0_1.xsd
+@@ -1,130 +1,157 @@
+-<?xml version="1.0" encoding="UTF-8"?>
+-<xs:schema xmlns:ds="http://www.w3.org/2000/09/xmldsig#" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns="http://www.trustedcomputinggroup.org/XML/SCHEMA/Core_Integrity_v1_0_1#" targetNamespace="http://www.trustedcomputinggroup.org/XML/SCHEMA/Core_Integrity_v1_0_1#" elementFormDefault="qualified" attributeFormDefault="unqualified" version="1.0.1">
+-	<xs:import namespace="http://www.w3.org/2000/09/xmldsig#" schemaLocation="xmldsig-core-schema.xsd"/>
+-
+-	<xs:complexType name="AssertionType" abstract="false">
+-		<xs:sequence>
+-			<xs:any namespace="##other" processContents="lax"/>
+-		</xs:sequence>
+-		<xs:attribute name="Id" type="xs:ID"/>
+-	</xs:complexType>
+-	<xs:complexType name="ComponentIDType">
+-		<xs:sequence>
+-			<xs:element name="VendorID" type="VendorIdType"/>
+-		</xs:sequence>
+-		<xs:attribute name="Id" type="xs:ID" use="required"/>
+-		<xs:attribute name="SimpleName" type="xs:normalizedString" use="optional"/>
+-		<xs:attribute name="ModelName" type="xs:normalizedString" use="optional"/>
+-		<xs:attribute name="ModelNumber" type="xs:normalizedString" use="optional"/>
+-		<xs:attribute name="ModelSerialNumber" type="xs:normalizedString" use="optional"/>
+-		<xs:attribute name="ModelSystemClass" type="xs:normalizedString" use="optional"/>
+-		<xs:attribute name="VersionMajor" type="xs:integer" use="optional"/>
+-		<xs:attribute name="VersionMinor" type="xs:integer" use="optional"/>
+-		<xs:attribute name="VersionBuild" type="xs:integer" use="optional"/>
+-		<xs:attribute name="VersionString" type="xs:normalizedString" use="optional"/>
+-		<xs:attribute name="MfgDate" type="xs:dateTime" use="optional"/>
+-		<xs:attribute name="PatchLevel" type="xs:normalizedString" use="optional"/>
+-		<xs:attribute name="DiscretePatches" type="xs:NMTOKENS" use="optional"/>
+-	</xs:complexType>
+-	<xs:complexType name="ComponentRefType">
+-		<xs:choice>
+-			<xs:element name="ComponentID">
+-				<xs:complexType>
+-					<xs:complexContent>
+-						<xs:extension base="ComponentIDType"/>
+-					</xs:complexContent>
+-				</xs:complexType>
+-			</xs:element>
+-			<xs:element name="ComponentIDREF" type="xs:IDREF"/>
+-		</xs:choice>
+-		<xs:attribute name="ComponentLoc" type="xs:anyURI" use="optional"/>
+-	</xs:complexType>
+-	<xs:complexType name="ConfidenceValueType">
+-		<xs:attribute name="Score" type="xs:integer" use="required"/>
+-		<xs:attribute name="Basis" type="xs:integer" use="required"/>
+-		<xs:attribute name="Authority" type="xs:anyURI" use="optional"/>
+-	</xs:complexType>
+-	<xs:complexType name="DigestMethodType">
+-		<xs:complexContent>
+-			<xs:extension base="ds:DigestMethodType">
+-				<xs:attribute name="Id" type="xs:ID" use="required"/>
+-			</xs:extension>
+-		</xs:complexContent>
+-	</xs:complexType>
+-	<xs:complexType name="DigestValueType">
+-		<xs:simpleContent>
+-			<xs:extension base="ds:DigestValueType">
+-				<xs:attribute name="Id" type="xs:ID" use="required"/>
+-				<xs:attribute name="AlgRef" type="xs:IDREF" use="required"/>
+-				<xs:attribute name="TransformRefs" type="xs:IDREFS"/>
+-			</xs:extension>
+-		</xs:simpleContent>
+-	</xs:complexType>
+-	<xs:complexType name="HashedURIType">
+-		<xs:sequence minOccurs="0">
+-			<xs:element name="UriHash" type="DigestValueType" maxOccurs="unbounded"/>
+-		</xs:sequence>
+-		<xs:attribute name="UriValue" type="xs:anyURI" use="required"/>
+-	</xs:complexType>
+-	<xs:complexType name="HashType">
+-		<xs:simpleContent>
+-			<xs:extension base="DigestValueType">
+-				<xs:attribute name="ExtendOrder" type="xs:IDREFS"/>
+-			</xs:extension>
+-		</xs:simpleContent>
+-	</xs:complexType>
+-	<xs:complexType name="IntegrityManifestType" abstract="true">
+-		<xs:sequence>
+-			<xs:element name="ComponentID" type="ComponentIDType"/>
+-			<xs:element name="SignerInfo" type="SignerInfoType" minOccurs="0"/>
+-			<xs:element name="ConfidenceValue" type="ConfidenceValueType" minOccurs="0"/>
+-			<xs:element name="Collector" type="ComponentRefType" minOccurs="0"/>
+-			<xs:element name="TransformMethod" type="TransformMethodType" minOccurs="0" maxOccurs="unbounded"/>
+-			<xs:element name="DigestMethod" type="DigestMethodType" minOccurs="0" maxOccurs="unbounded"/>
+-			<xs:element name="Values" type="ValueType" minOccurs="0" maxOccurs="unbounded"/>
+-			<xs:element name="AssertionInfo" type="AssertionType" minOccurs="0" maxOccurs="unbounded"/>
+-			<xs:element name="PlatformClass" type="PlatformClassType" minOccurs="0"/>
+-			<xs:element name="SubComponents" type="ComponentRefType" minOccurs="0" maxOccurs="unbounded"/>
+-		</xs:sequence>
+-		<xs:attribute name="Id" type="xs:ID" use="required"/>
+-		<xs:attribute name="RevLevel" type="xs:integer" use="required"/>
+-	</xs:complexType>
+-	<xs:complexType name="PlatformClassType">
+-		<xs:attribute name="Class" type="xs:anyURI" use="optional"/>
+-	</xs:complexType>
+-	<xs:complexType name="SignerInfoType">
+-		<xs:sequence>
+-			<xs:element ref="ds:Signature"/>
+-			<xs:element name="SigningComponent" type="ComponentRefType" minOccurs="0"/>
+-		</xs:sequence>
+-		<xs:attribute name="DateTime" type="xs:dateTime"/>
+-		<xs:attribute name="Nonce" type="xs:base64Binary"/>
+-	</xs:complexType>
+-	<xs:complexType name="TransformMethodType">
+-		<xs:complexContent>
+-			<xs:extension base="ds:TransformType">
+-				<xs:attribute name="Id" type="xs:ID" use="required"/>
+-			</xs:extension>
+-		</xs:complexContent>
+-	</xs:complexType>
+-	<xs:complexType name="ValueType">
+-		<xs:sequence>
+-			<xs:any namespace="##other" processContents="lax"/>
+-		</xs:sequence>
+-		<xs:attribute name="Id" type="xs:ID"/>
+-	</xs:complexType>
+-	<xs:complexType name="VendorIdType">
+-		<xs:choice maxOccurs="unbounded">
+-			<xs:element name="TcgVendorId">
+-				<xs:simpleType>
+-					<xs:restriction base="xs:normalizedString">
+-						<xs:maxLength value="4"/>
+-					</xs:restriction>
+-				</xs:simpleType>
+-			</xs:element>
+-			<xs:element name="SmiVendorId" type="xs:integer"/>
+-			<xs:element name="VendorGUID" type="xs:NMTOKEN"/>
+-		</xs:choice>
+-		<xs:attribute name="Name" type="xs:normalizedString"/>
+-	</xs:complexType>
+-</xs:schema>
++<?xml version="1.0" encoding="UTF-8"?>
++<xs:schema xmlns:ds="http://www.w3.org/2000/09/xmldsig#" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns="http://www.trustedcomputinggroup.org/XML/SCHEMA/Core_Integrity_v1_0_1#" targetNamespace="http://www.trustedcomputinggroup.org/XML/SCHEMA/Core_Integrity_v1_0_1#" elementFormDefault="qualified" attributeFormDefault="unqualified" version="1.0.1">
++	<xs:import namespace="http://www.w3.org/2000/09/xmldsig#" schemaLocation="xmldsig-core-schema.xsd"/>
++
++	<xs:complexType name="AssertionType" abstract="false">
++		<xs:sequence>
++			<xs:any namespace="##other" processContents="lax"/>
++		</xs:sequence>
++		<xs:attribute name="Id" type="xs:ID"/>
++	</xs:complexType>
++	<xs:complexType name="ComponentIDType">
++		<xs:sequence>
++			<xs:element name="VendorID" type="VendorIdType"/>
++			<xs:element name="Container" type="ContainerType" maxOccurs="unbounded"/>
++			<xs:element name="Host" type="HostType" maxOccurs="1"/>
++		</xs:sequence>
++		<xs:attribute name="Id" type="xs:ID" use="required"/>
++		<xs:attribute name="SimpleName" type="xs:normalizedString" use="optional"/>
++		<xs:attribute name="ModelName" type="xs:normalizedString" use="optional"/>
++		<xs:attribute name="ModelNumber" type="xs:normalizedString" use="optional"/>
++		<xs:attribute name="ModelSerialNumber" type="xs:normalizedString" use="optional"/>
++		<xs:attribute name="ModelSystemClass" type="xs:normalizedString" use="optional"/>
++		<xs:attribute name="VersionMajor" type="xs:integer" use="optional"/>
++		<xs:attribute name="VersionMinor" type="xs:integer" use="optional"/>
++		<xs:attribute name="VersionBuild" type="xs:integer" use="optional"/>
++		<xs:attribute name="VersionString" type="xs:normalizedString" use="optional"/>
++		<xs:attribute name="MfgDate" type="xs:dateTime" use="optional"/>
++		<xs:attribute name="PatchLevel" type="xs:normalizedString" use="optional"/>
++		<xs:attribute name="DiscretePatches" type="xs:NMTOKENS" use="optional"/>
++	</xs:complexType>
++	<xs:complexType name="ComponentRefType">
++		<xs:choice>
++			<xs:element name="ComponentID">
++				<xs:complexType>
++					<xs:complexContent>
++						<xs:extension base="ComponentIDType"/>
++					</xs:complexContent>
++				</xs:complexType>
++			</xs:element>
++			<xs:element name="ComponentIDREF" type="xs:IDREF"/>
++		</xs:choice>
++		<xs:attribute name="ComponentLoc" type="xs:anyURI" use="optional"/>
++	</xs:complexType>
++	<xs:complexType name="ConfidenceValueType">
++		<xs:attribute name="Score" type="xs:integer" use="required"/>
++		<xs:attribute name="Basis" type="xs:integer" use="required"/>
++		<xs:attribute name="Authority" type="xs:anyURI" use="optional"/>
++	</xs:complexType>
++	<xs:complexType name="DigestMethodType">
++		<xs:complexContent>
++			<xs:extension base="ds:DigestMethodType">
++				<xs:attribute name="Id" type="xs:ID" use="required"/>
++			</xs:extension>
++		</xs:complexContent>
++	</xs:complexType>
++	<xs:complexType name="DigestValueType">
++		<xs:simpleContent>
++			<xs:extension base="ds:DigestValueType">
++				<xs:attribute name="Id" type="xs:ID" use="required"/>
++				<xs:attribute name="AlgRef" type="xs:IDREF" use="required"/>
++				<xs:attribute name="TransformRefs" type="xs:IDREFS"/>
++			</xs:extension>
++		</xs:simpleContent>
++	</xs:complexType>
++	<xs:complexType name="HashedURIType">
++		<xs:sequence minOccurs="0">
++			<xs:element name="UriHash" type="DigestValueType" maxOccurs="unbounded"/>
++		</xs:sequence>
++		<xs:attribute name="UriValue" type="xs:anyURI" use="required"/>
++	</xs:complexType>
++	<xs:complexType name="HashType">
++		<xs:simpleContent>
++			<xs:extension base="DigestValueType">
++				<xs:attribute name="ExtendOrder" type="xs:IDREFS"/>
++			</xs:extension>
++		</xs:simpleContent>
++	</xs:complexType>
++	<xs:complexType name="IntegrityManifestType" abstract="true">
++		<xs:sequence>
++			<xs:element name="ComponentID" type="ComponentIDType"/>
++			<xs:element name="SignerInfo" type="SignerInfoType" minOccurs="0"/>
++			<xs:element name="ConfidenceValue" type="ConfidenceValueType" minOccurs="0"/>
++			<xs:element name="Collector" type="ComponentRefType" minOccurs="0"/>
++			<xs:element name="TransformMethod" type="TransformMethodType" minOccurs="0" maxOccurs="unbounded"/>
++			<xs:element name="DigestMethod" type="DigestMethodType" minOccurs="0" maxOccurs="unbounded"/>
++			<xs:element name="Values" type="ValueType" minOccurs="0" maxOccurs="unbounded"/>
++			<xs:element name="AssertionInfo" type="AssertionType" minOccurs="0" maxOccurs="unbounded"/>
++			<xs:element name="PlatformClass" type="PlatformClassType" minOccurs="0"/>
++			<xs:element name="SubComponents" type="ComponentRefType" minOccurs="0" maxOccurs="unbounded"/>
++		</xs:sequence>
++		<xs:attribute name="Id" type="xs:ID" use="required"/>
++		<xs:attribute name="RevLevel" type="xs:integer" use="required"/>
++	</xs:complexType>
++	<xs:complexType name="PlatformClassType">
++		<xs:attribute name="Class" type="xs:anyURI" use="optional"/>
++	</xs:complexType>
++	<xs:complexType name="SignerInfoType">
++		<xs:sequence>
++			<xs:element ref="ds:Signature"/>
++			<xs:element name="SigningComponent" type="ComponentRefType" minOccurs="0"/>
++		</xs:sequence>
++		<xs:attribute name="DateTime" type="xs:dateTime"/>
++		<xs:attribute name="Nonce" type="xs:base64Binary"/>
++	</xs:complexType>
++	<xs:complexType name="TransformMethodType">
++		<xs:complexContent>
++			<xs:extension base="ds:TransformType">
++				<xs:attribute name="Id" type="xs:ID" use="required"/>
++			</xs:extension>
++		</xs:complexContent>
++	</xs:complexType>
++	<xs:complexType name="ValueType">
++		<xs:sequence>
++			<xs:any namespace="##other" processContents="lax"/>
++		</xs:sequence>
++		<xs:attribute name="Id" type="xs:ID"/>
++	</xs:complexType>
++	<xs:complexType name="VendorIdType">
++		<xs:choice maxOccurs="unbounded">
++			<xs:element name="TcgVendorId">
++				<xs:simpleType>
++					<xs:restriction base="xs:normalizedString">
++						<xs:maxLength value="4"/>
++					</xs:restriction>
++				</xs:simpleType>
++			</xs:element>
++			<xs:element name="SmiVendorId" type="xs:integer"/>
++			<xs:element name="VendorGUID" type="xs:NMTOKEN"/>
++		</xs:choice>
++		<xs:attribute name="Name" type="xs:normalizedString"/>
++	</xs:complexType>
++	<xs:complexType name="ContainerType">
++		<xs:sequence>
++			<xs:element name="DevId">
++				<xs:simpleType>
++					<xs:restriction base="xs:normalizedString">
++						<xs:minLength value="3"/>
++						<xs:maxLength value="10"/>
++					</xs:restriction>
++				</xs:simpleType>
++			</xs:element>
++		</xs:sequence>
++		<xs:attribute name="Id" type="xs:string"/>
++	</xs:complexType>
++	<xs:complexType name="HostType">
++		<xs:sequence>
++			<xs:element name="DevId" maxOccurs="unbounded">
++				<xs:simpleType>
++					<xs:restriction base="xs:normalizedString">
++						<xs:minLength value="3"/>
++						<xs:maxLength value="10"/>
++					</xs:restriction>
++				</xs:simpleType>
++			</xs:element>
++		</xs:sequence>
++	</xs:complexType>
++</xs:schema>
+-- 
+1.9.1
+
