@@ -1,7 +1,7 @@
 '''
 The MIT License (MIT)
 
-Copyright (c) 2015 Tao Su <tao.su@polito.it>
+Copyright (c) 2015 Paolo Smiraglia <paolo.smiraglia@polito.it>
                    TORSEC Group (http://security.polito.it)
                    Politecnico di Torino
 
@@ -24,7 +24,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 '''
 
-BASE_DIR = '/home/tao/ram'
+BASE_DIR = '/home/user/verifier/ram'
 
 
 STATIC_PATH= '%s/html/' % BASE_DIR
@@ -35,16 +35,18 @@ DB_USER = 'secured'
 
 
 WEBAPP_PORT = 8899
-WEBAPP_ADDRESS = 'verifier'
+WEBAPP_ADDRESS = '130.192.1.110'
 WEBAPP_AS_DAEMON = False
 
 OAT_CERT = '%s/data/certfile.cer' % BASE_DIR
 OAT_PERIOD = 60000
-OAT_NODE = ['ned1','ned2']
+OAT_NODE = 'attester'
+#OAT_NODE = 'attestee'
 OAT_EXPIRATION = '1d'
 OAT_VERIFIER = 'verifier'
-OAT_LEVEL = 'l_req=l4_ima_all_ok|>='
+OAT_LEVEL = 'l_req=l2_ima_all_ok|>='
 OAT_WAITTIME = 8
+OAT_CONT_LIST = ['5b6ec1d68f2e']
 
 
 # accepted values: debug, info, warn, err
